@@ -5,9 +5,23 @@ from primordial_byte.interpreter import BFFState, run
 from primordial_byte.metrics import high_order_entropy
 
 
-def create_soup(n_programs: int, program_size: int = 64) -> list[bytearray]:
+def set_seed(seed: int) -> None:
+    """Set random seed for reproducibility."""
+    random.seed(seed)
+
+
+def create_soup(
+    n_programs: int,
+    program_size: int = 64,
+    use_urandom: bool = False,
+) -> list[bytearray]:
     """Create n_programs random programs of program_size bytes each."""
-    return [bytearray(os.urandom(program_size)) for _ in range(n_programs)]
+    if use_urandom:
+        return [bytearray(os.urandom(program_size)) for _ in range(n_programs)]
+    return [
+        bytearray(random.randint(0, 255) for _ in range(program_size))
+        for _ in range(n_programs)
+    ]
 
 
 def mutate(soup: list[bytearray], mutation_rate: float = 0.00024) -> None:
@@ -19,7 +33,6 @@ def mutate(soup: list[bytearray], mutation_rate: float = 0.00024) -> None:
     program_size = len(soup[0])
     total_bytes = n_programs * program_size
 
-    # Expected number of mutations per epoch
     n_mutations = int(total_bytes * mutation_rate + 0.5)
 
     for _ in range(n_mutations):
@@ -34,7 +47,7 @@ def run_epoch(soup: list[bytearray], program_size: int = 64) -> None:
     for index in range(0, len(soup), 2):
         invert: bool = random.random() < 0.5
         prog_a = soup[index]
-        prog_b = soup[index+1]
+        prog_b = soup[index + 1]
         if invert:
             prog = prog_a + prog_b
         else:
@@ -43,12 +56,12 @@ def run_epoch(soup: list[bytearray], program_size: int = 64) -> None:
         run(state)
         first_half = state.tape[:program_size]
         second_half = state.tape[program_size:]
-        if invert:  # prog was A+B
-            soup[index] = first_half      # modified A
-            soup[index+1] = second_half   # modified B
-        else:       # prog was B+A
-            soup[index] = second_half     # modified A
-            soup[index+1] = first_half    # modified B
+        if invert:
+            soup[index] = first_half
+            soup[index + 1] = second_half
+        else:
+            soup[index] = second_half
+            soup[index + 1] = first_half
 
 
 def run_simulation(
@@ -57,59 +70,29 @@ def run_simulation(
     n_epochs: int = 16000,
     mutation_rate: float = 0.00024,
     measure_every: int = 100,
+    seed: int | None = None,
 ) -> list[float]:
-    """
-    Run full simulation. Return list of high-order entropy measurements.
-    """
+    """Run full simulation. Return list of high-order entropy measurements."""
+    if seed is not None:
+        set_seed(seed)
+
     measurements: list[float] = []
     soup = create_soup(n_programs, program_size=program_size)
+
     for epoch in range(n_epochs):
         run_epoch(soup, program_size=program_size)
         mutate(soup, mutation_rate=mutation_rate)
+
         if epoch % measure_every == 0:
             complexity = high_order_entropy(b"".join(soup))
             measurements.append(complexity)
-            print(complexity)
+            print(f"epoch={epoch+1:06d}, complexity={complexity:.5f}")
 
     return measurements
-
-
-def count_replicators(soup: list[bytearray], pattern: bytes) -> int:
-    return sum(1 for prog in soup if pattern in bytes(prog))
-
-
-def run_seeded_simulation(
-    n_programs: int = 4096,
-    program_size: int = 64,
-    n_epochs: int = 16_000,
-    mutation_rate: float = 0.00024,
-    measure_every: int = 100,
-) -> list[float]:
-    """Seed soup with one known replicator, see if it takes over."""
-    measurements: list[float] = []
-    soup = create_soup(n_programs, program_size=program_size)
-    replicator_code = b"[[{.>]-]]-]>.{[["  # 16 bytes, no space in middle
-    replicator_bytes = replicator_code + bytes(48)  # pad with zeros
-
-    soup[0] = bytearray(replicator_bytes)
-    soup[1] = bytearray(replicator_bytes)
-    replicator = b"[[{.>]-]]-]>.{[["
-    for epoch in range(n_epochs):
-        run_epoch(soup, program_size=program_size)
-        count = count_replicators(soup, replicator)
-        complexity = high_order_entropy(b"".join(soup))
-        mutate(soup, mutation_rate=mutation_rate)
-        if epoch % measure_every == 0:
-            complexity = high_order_entropy(b"".join(soup))
-            measurements.append(complexity)
-            print(f"epoch={epoch}, complexity={complexity:.3f}, replicators={count}")
-
-    return measurements
-
 
 
 def main():
-    run_seeded_simulation()
+    run_simulation(seed=0)
 
 
 if __name__ == "__main__":
